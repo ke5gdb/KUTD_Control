@@ -13,6 +13,8 @@ t - Transmits (MX-15)
 s - Enable Stereo Generation (Optimod)
 l - Disable Stereo; Enable Mono (Left) (Optimod)
 r - Disable Stereo; Enable Mono (Right) (Optimod)
+c - Clears high VSWR transmit inhibit
+p - Programs EEPROM with new values, direct serial access required (prompts)
 
 Connections:
 a0 - PA Current
@@ -43,6 +45,7 @@ transmissions when both pins are grounded.
 **/
 
 #include <math.h>
+#include <EEPROM.h>
 
 char incomingChar;
 
@@ -57,11 +60,12 @@ y=mx+b, or x=(y-b)/x
 [3] - Raw value
 
 **/
-double paCurrent[] = {0, 48.4, 159.4, 0};
-double paVoltage[] = {0, 82, 5, 0};
-double rfForward[] = {0, 33.125, 285.75, 0};
-double rfReflected[] = {0, 217, 131.5, 0};
-double compression[] = {0, 18, 424, 0};
+
+double paCurrent[] = {0, 0, 0, 0};     // [1, 2] are in EEPROM [0,4] respectively
+double paVoltage[] = {0, 0, 0, 0};     // [1, 2] are in EEPROM [8,12] respectively
+double rfForward[] = {0, 0, 00, 0};    // [1, 2] are in EEPROM [16,20] respectively
+double rfReflected[] = {0, 0, 0, 0};   // [1, 2] are in EEPROM [24,28] respectively
+double compression[] = {0, 0, 0, 0};   // [1, 2] are in EEPROM [32,36] respectively
 double vswr;
 
 boolean vswrInhibit = 0;
@@ -69,6 +73,62 @@ int vswrCount = 0;
 int max_vswr_count = 3;        // Number of retrys before transmitter must be checked
 double max_rfReflected = 1.5;  // Max reflected RF allowed
 double max_vswr = 2;           // Max VSWR allowed
+
+
+// Write double to EEPROM
+void EEPROMWriteDouble(int address, double value)
+{
+  byte* p = (byte*)(void*)&value;
+    for (int i = 0; i < sizeof(value); i++)
+      EEPROM.write(address++, *p++);
+}
+
+// Read double from EEPROM
+double EEPromReadDouble(int address)
+{
+  double value = 0.0;
+  byte* p = (byte*)(void*)&value;
+  for (int i = 0; i < sizeof(value); i++)
+    *p++ = EEPROM.read(address++);
+  return value;
+}
+
+void programEEPROM()
+{
+  int lf = 10;
+  // Ask user for these parameters and program them into EEPROM
+  Serial.println("Please enter the appropriate value and press enter.");
+  Serial.println("PA Current (I) coefficient: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(0, (double)Serial.readStringUntil(lf));
+  Serial.println("PA Current (I) offset: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(4, (double)Serial.readStringUntil(lf));
+  Serial.println("PA Voltage (V) coefficient: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(8, (double)Serial.readStringUntil(lf));
+  Serial.println("PA Voltage (V) offset: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(12, (double)Serial.readStringUntil(lf));
+  Serial.println("RF Forward coefficient: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(16, (double)Serial.readStringUntil(lf));
+  Serial.println("RF Forward offset: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(20, (double)Serial.readStringUntil(lf));
+  Serial.println("RF Reflected coefficient: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(24, (double)Serial.readStringUntil(lf));
+  Serial.println("RF Reflected offset: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(28, (double)Serial.readStringUntil(lf));
+  Serial.println("Compression coefficient: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(32, (double)Serial.readStringUntil(lf));
+  Serial.println("Compression offset: ");
+  while (Serial.available() > 0)
+    EEPROMWriteDouble(36, (double)Serial.readStringUntil(lf));
+}
 
 void setup() {
   // initialize serial communications at 9600 bps:
@@ -87,6 +147,17 @@ void setup() {
   pinMode(3, OUTPUT);
   pinMode(4, OUTPUT);
   pinMode(5, OUTPUT);
+
+  paCurrent[1] = EEPromReadDouble(0);
+  paCurrent[2] = EEPromReadDouble(4);
+  paVoltage[1] = EEPromReadDouble(8);
+  paVoltage[2] = EEPromReadDouble(12);
+  rfForward[1] = EEPromReadDouble(16);
+  rfForward[2] = EEPromReadDouble(20);
+  rfReflected[1] = EEPromReadDouble(24);
+  rfReflected[2] = EEPromReadDouble(28);
+  compression[1] = EEPromReadDouble(32);
+  compression[2] = EEPromReadDouble(36);
   delay(2500);
 }
 
@@ -122,9 +193,13 @@ void loop() {
          digitalWrite(5, LOW);
          break;
          
-       case 'c':
+       case 'c': // Clear VSWR Transmit inhibit
          vswrCount = -1; 
          Serial.println("VSWR transmit inhibit cleared");
+         break;
+         
+       case 'p': // Run the EEPROM programming routine
+         programEEPROM();
          break;
        
        default:
