@@ -360,7 +360,7 @@ void loop() {
   }
   
   // Turn transmitter back on if VSWR lowers
-  if((vswr < max_vswr) && (rfReflected[0] < max_rfReflected) && (vswrCount < max_vswr_count) && vswrInhibit)
+  if((vswr < max_vswr || vswr == inf) && (rfReflected[0] < max_rfReflected) && (vswrCount < max_vswr_count) && vswrInhibit)
   {
     // Notify Serial client
     Serial.print("ALERT: VSWR in safe range; transmitting. VSWR Count = ");
