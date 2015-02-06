@@ -5,7 +5,7 @@ KUTDuino_Control
 (C) 2015 Andrew Koenig, KE5GDB - Project Engineer, KUTD-FM
 
 Analog Values:
-PA Current, PA Voltage, RF Forward, RF Reflected, Compression
+PA Current, PA Voltage, RF Forward, RF Reflected, Compression, VSWR
 
 Commands:
 i - Inhibits Transmission (MX-15)
@@ -41,7 +41,17 @@ to ground, completing the circuit. The same type of buffer is
 utilized on the transmit inhibit (d2), but the MX-15 will inhibit 
 transmissions when both pins are grounded. 
 
+Programming notes:
+There are a couple of functions programmed locally to mitigate transmitter
+problems in the event that the controlling PC or Pi does not respond. The
+VSWR check calculates the VSWR, and will inhibit transmission if the reflected
+power or VSWR exceed defined amounts. To program these values, run the 'p'
+command. The program will check for high SWR several times before turning the 
+transmitter off for good. Once the problem is remedied, run the 'c' command.
 
+All constants are stored in EEPROM. You need to have the entire array of 
+parameters ready to be entered when running the 'p' command, as there is no
+method to only enter some parameters. 
 **/
 
 #include <math.h>
@@ -61,19 +71,21 @@ y=mx+b, or x=(y-b)/x
 
 **/
 
-double paCurrent[] = {0, 0, 0, 0};     // [1, 2] are in EEPROM [0,4] respectively
-double paVoltage[] = {0, 0, 0, 0};     // [1, 2] are in EEPROM [8,12] respectively
-double rfForward[] = {0, 0, 00, 0};    // [1, 2] are in EEPROM [16,20] respectively
-double rfReflected[] = {0, 0, 0, 0};   // [1, 2] are in EEPROM [24,28] respectively
-double compression[] = {0, 0, 0, 0};   // [1, 2] are in EEPROM [32,36] respectively
+// DEFINE VARIABLES
+double paCurrent[] = {0, 0, 0, 0, 0};     // [1, 2] are in EEPROM [0,4] respectively
+double paVoltage[] = {0, 0, 0, 0, 0};     // [1, 2] are in EEPROM [8,12] respectively
+double rfForward[] = {0, 0, 0, 0, 0};     // [1, 2] are in EEPROM [16,20] respectively
+double rfReflected[] = {0, 0, 0, 0, 0};   // [1, 2] are in EEPROM [24,28] respectively
+double compression[] = {0, 0, 0, 0, 0};   // [1, 2] are in EEPROM [32,36] respectively
 double vswr;
 
 boolean vswrInhibit = 0;
 int vswrCount = 0;
-int max_vswr_count = 3;        // Number of retrys before transmitter must be checked
-double max_rfReflected = 1.5;  // Max reflected RF allowed
-double max_vswr = 2;           // Max VSWR allowed
+int max_vswr_count;        // Number of retrys before transmitter must be checked (recalled from EEPROM in setup())
+double max_rfReflected;    // Max reflected RF allowed (recalled from EEPROM in setup())
+double max_vswr;           // Max VSWR allowed (recalled from EEPROM in setup())
 
+// DEFINE SOME FUNCTIONS
 
 // Write double to EEPROM
 void EEPROMWriteDouble(int address, double value)
@@ -93,48 +105,140 @@ double EEPromReadDouble(int address)
   return value;
 }
 
+// Enable the reset function
+void(* resetFunc) (void) = 0;
+
 void programEEPROM()
 {
-  int lf = 10;
-  // Ask user for these parameters and program them into EEPROM
-  Serial.println("Please enter the appropriate value and press enter.");
-  Serial.println("PA Current (I) coefficient: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(0, (double)Serial.readStringUntil(lf));
-  Serial.println("PA Current (I) offset: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(4, (double)Serial.readStringUntil(lf));
-  Serial.println("PA Voltage (V) coefficient: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(8, (double)Serial.readStringUntil(lf));
-  Serial.println("PA Voltage (V) offset: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(12, (double)Serial.readStringUntil(lf));
-  Serial.println("RF Forward coefficient: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(16, (double)Serial.readStringUntil(lf));
-  Serial.println("RF Forward offset: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(20, (double)Serial.readStringUntil(lf));
-  Serial.println("RF Reflected coefficient: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(24, (double)Serial.readStringUntil(lf));
-  Serial.println("RF Reflected offset: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(28, (double)Serial.readStringUntil(lf));
-  Serial.println("Compression coefficient: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(32, (double)Serial.readStringUntil(lf));
-  Serial.println("Compression offset: ");
-  while (Serial.available() > 0)
-    EEPROMWriteDouble(36, (double)Serial.readStringUntil(lf));
+  // Explain how this will work, and request a character to proceed
+  Serial.println("Enter the appropriate value and press enter.");
+  Serial.println();  
+  Serial.println("Remeber: y=ax^2+bx+c, and enter .0001 for 0");
+  Serial.println();
+  Serial.println("Enter 'p' when ready");
+  while(Serial.read() != 'p');
+  
+  // Setup the variable
+  float serialValue = 0;
+  
+  Serial.println("PA Current (I) a: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(0, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("PA Current (I) b: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(4, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("PA Current (I) c: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(8, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("PA Voltage (V) a: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(12, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("PA Voltage (V) b: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(16, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("PA Voltage (V) c: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(20, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("RF Forward a: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(24, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("RF Forward b: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(28, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("RF Forward c: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(32, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("RF Reflected a: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(36, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("RF Reflected b: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(40, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("RF Reflected c: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(44, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("Compression a: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(48, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("Compression b: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(52, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("Compression c: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(56, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("Max VSWR retries: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(60, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("Max reflected power (watts): ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(64, (double)serialValue);
+  serialValue = 0;
+  
+  Serial.println("Max VSWR: ");
+  while (serialValue == 0)
+      serialValue = Serial.parseFloat();
+  EEPROMWriteDouble(68, (double)serialValue);
+  serialValue = 0;
+  
+  // Reset the ATMega
+  resetFunc();
+  
 }
 
 void setup() {
   // initialize serial communications at 9600 bps:
   Serial.begin(9600);
   Serial.println("POWER ON");
-  Serial.println("PA I, PA V, RF FWD, RF REF, COMPRESSION");
+  Serial.println("PA I, PA V, RF FWD, RF REF, COMPRESSION, VSWR");
   Serial.println("COMMANDS:");
   Serial.println("i - inhibit transmission");
   Serial.println("t - enable transmission");
@@ -142,6 +246,7 @@ void setup() {
   Serial.println("l - disable stereo; switch to mono left");
   Serial.println("r - disable stereo; switch to mono right");
   Serial.println("c - clears high VSWR transmit inhibit");
+  Serial.println("p - Reprogram raw to actual values");
   Serial.println("=======================================");
   pinMode(2, OUTPUT);
   pinMode(3, OUTPUT);
@@ -150,14 +255,22 @@ void setup() {
 
   paCurrent[1] = EEPromReadDouble(0);
   paCurrent[2] = EEPromReadDouble(4);
-  paVoltage[1] = EEPromReadDouble(8);
-  paVoltage[2] = EEPromReadDouble(12);
-  rfForward[1] = EEPromReadDouble(16);
-  rfForward[2] = EEPromReadDouble(20);
-  rfReflected[1] = EEPromReadDouble(24);
-  rfReflected[2] = EEPromReadDouble(28);
-  compression[1] = EEPromReadDouble(32);
-  compression[2] = EEPromReadDouble(36);
+  paCurrent[3] = EEPromReadDouble(8);
+  paVoltage[1] = EEPromReadDouble(12);
+  paVoltage[2] = EEPromReadDouble(16);
+  paVoltage[3] = EEPromReadDouble(20);
+  rfForward[1] = EEPromReadDouble(24);
+  rfForward[2] = EEPromReadDouble(28);
+  rfForward[3] = EEPromReadDouble(32);
+  rfReflected[1] = EEPromReadDouble(36);
+  rfReflected[2] = EEPromReadDouble(40);
+  rfReflected[3] = EEPromReadDouble(44);
+  compression[1] = EEPromReadDouble(48);
+  compression[2] = EEPromReadDouble(52);
+  compression[3] = EEPromReadDouble(56);
+  max_vswr_count = (int)EEPromReadDouble(60);
+  max_rfReflected = EEPromReadDouble(64);
+  max_vswr = EEPromReadDouble(68);
   delay(2500);
 }
 
@@ -208,28 +321,35 @@ void loop() {
   }
 
   // read the analog in value:
-  paCurrent[3] = analogRead(A0);
-  paVoltage[3] = analogRead(A1);
-  rfForward[3] = analogRead(A2);
-  rfReflected[3] = analogRead(A3);
-  compression[3] = analogRead(A4);
+  paCurrent[4] = analogRead(A0);
+  paVoltage[4] = analogRead(A1);
+  rfForward[4] = analogRead(A2);
+  rfReflected[4] = analogRead(A3);
+  compression[4] = analogRead(A4);
   
   
   // Calculate real values from raw values
-  paCurrent[0] = ((paCurrent[3] - paCurrent[2])/paCurrent[1]);
-  paVoltage[0] = ((paVoltage[3] - paVoltage[2])/paVoltage[1]);
-  rfForward[0] = ((rfForward[3] - rfForward[2])/rfForward[1]);
-  rfReflected[0] = ((rfReflected[3] - rfReflected[2])/rfReflected[1]);
-  compression[0] = ((compression[3] - compression[2])/compression[1]);
+  paCurrent[0] = ((paCurrent[4] - paCurrent[3])/paCurrent[2]);
+  paVoltage[0] = ((paVoltage[4] - paVoltage[3])/paVoltage[2]);
+  rfForward[0] = ((rfForward[4] - rfForward[3])/rfForward[2]);
+  rfReflected[0] = ((rfReflected[4] - rfReflected[3])/rfReflected[2]);
+  compression[0] = ((compression[4] - compression[3])/compression[2]);
+  
+  // Eliminate non-real results
+  if(rfForward[0] < 0)
+    rfForward[0] = 0.0;
+    
+  if(rfReflected[0] < 0)
+    rfReflected[0] = 0.0;
   
   // Calculate VSWR
   vswr = ((1 + sqrt(rfReflected[0] / rfForward[0])) / (1 - sqrt(rfReflected[0] / rfForward[0])));
   
   // Check for high reflected power OR VSWR
-  if((vswr > 2) || (rfReflected[0] > .75))
+  if((vswr > max_vswr) || (rfReflected[0] > max_rfReflected))
   {
     // Notify Serial client
-    Serial.println("CHECK ANTENNA - HIGH SWR");
+    Serial.println("ALERT: HIGH SWR - CHECK ANTENNA!");
     
     // Turn off transmitter
     digitalWrite(2, HIGH);
@@ -243,7 +363,7 @@ void loop() {
   if((vswr < max_vswr) && (rfReflected[0] < max_rfReflected) && (vswrCount < max_vswr_count) && vswrInhibit)
   {
     // Notify Serial client
-    Serial.print("VSWR in safe range; transmitting. VSWR Count = ");
+    Serial.print("ALERT: VSWR in safe range; transmitting. VSWR Count = ");
     Serial.println(vswrCount);
 
     // Turn on transmitter
@@ -257,16 +377,16 @@ void loop() {
   }
 
   // print the results to the serial monitor:
-  Serial.print(paCurrent[3]);
+  Serial.print(paCurrent[0]);
   Serial.print(", ");
-  Serial.print(paVoltage[3]);
+  Serial.print(paVoltage[0]);
   Serial.print(", ");
-  Serial.print(rfForward[3]);
+  Serial.print(rfForward[0]);
   Serial.print(", ");
-  Serial.print(rfReflected[3]);
+  Serial.print(rfReflected[0]);
   Serial.print(", ");
-  Serial.print(compression[3]);
-  Serial.print(", VSWR: ");
+  Serial.print(compression[0]);
+  Serial.print(", ");
   Serial.println(vswr);
   delay(100);
 }
