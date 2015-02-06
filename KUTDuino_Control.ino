@@ -4,6 +4,10 @@ KUTDuino_Control
 
 (C) 2015 Andrew Koenig, KE5GDB - Project Engineer, KUTD-FM
 
+Features to be implemented:
+> 1-wire thermal sensors (Transmitter, PA, Rack, Ambient)
+> Humidity Sensor
+
 Analog Values:
 PA Current, PA Voltage, RF Forward, RF Reflected, Compression, VSWR
 
@@ -246,7 +250,7 @@ void setup() {
   Serial.println("l - disable stereo; switch to mono left");
   Serial.println("r - disable stereo; switch to mono right");
   Serial.println("c - clears high VSWR transmit inhibit");
-  Serial.println("p - Reprogram raw to actual values");
+  Serial.println("p - reprogram raw to actual values");
   Serial.println("=======================================");
   pinMode(2, OUTPUT);
   pinMode(3, OUTPUT);
@@ -360,7 +364,7 @@ void loop() {
   }
   
   // Turn transmitter back on if VSWR lowers
-  if((vswr < max_vswr || vswr == inf) && (rfReflected[0] < max_rfReflected) && (vswrCount < max_vswr_count) && vswrInhibit)
+  if((vswr < max_vswr || isnan(vswr)) && (rfReflected[0] < max_rfReflected) && (vswrCount < max_vswr_count) && vswrInhibit)
   {
     // Notify Serial client
     Serial.print("ALERT: VSWR in safe range; transmitting. VSWR Count = ");
